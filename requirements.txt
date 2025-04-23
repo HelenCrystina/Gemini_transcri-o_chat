@@ -1,0 +1,7 @@
+streamlit
+google-generativeai
+youtube-transcript-api
+youtube3
+python-dotenv
+pytube
+toml
