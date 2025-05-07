@@ -5,3 +5,4 @@ youtube3
 python-dotenv
 pytube
 toml
+beautifulsoup4

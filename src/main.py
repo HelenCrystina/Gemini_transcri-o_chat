@@ -1,54 +1,88 @@
+import os
+import re
 import streamlit as st
-from pytube import YouTube
-from youtube_transcript_api import YouTubeTranscriptApi
-from youtube_transcript_api.formatters import TextFormatter
-from youtube_transcript_api._errors import TranscriptsDisabled, NoTranscriptFound
+from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound, VideoUnavailable
+from dotenv import load_dotenv
+import google.generativeai as genai
+import requests
+from bs4 import BeautifulSoup
 
-import gemini_utils  # Certifique-se de que este módulo está correto e configurado
+# ========== YOUTUBE UTILITIES ==========
 
-def get_transcription(video_id):
+def extract_video_id(url):
+    match = re.search(r"(?:v=|\/)([0-9A-Za-z_-]{11})", url)
+    return match.group(1) if match else None
+
+def get_video_title(video_url):
     try:
-        transcript = YouTubeTranscriptApi.get_transcript(video_id)
-        formatter = TextFormatter()
-        return formatter.format_transcript(transcript)
-    except TranscriptsDisabled:
-        return "❌ Este vídeo não possui legendas ativadas."
-    except NoTranscriptFound:
-        return "❌ Nenhuma transcrição encontrada para este vídeo."
+        response = requests.get(video_url)
+        soup = BeautifulSoup(response.text, 'html.parser')
+        title = soup.title.string
+        return title.replace(" - YouTube", "") if title else "Título não encontrado"
     except Exception as e:
-        return f"⚠️ Erro ao obter transcrição: {str(e)}"
+        return f"Erro ao obter título: {e}"
+
+def get_transcript(video_id):
+    try:
+        transcript_list = YouTubeTranscriptApi.get_transcript(video_id, languages=['pt', 'en'])
+        return ' '.join([x['text'] for x in transcript_list])
+    except TranscriptsDisabled:
+        raise Exception("❌ A transcrição está desativada para este vídeo.")
+    except NoTranscriptFound:
+        raise Exception("⚠️ Nenhuma transcrição foi encontrada para este vídeo.")
+    except VideoUnavailable:
+        raise Exception("🚫 O vídeo está indisponível.")
+    except Exception as e:
+        raise Exception(f"Erro inesperado ao obter transcrição: {e}")
+
+# ========== GEMINI UTILITIES ==========
+
+def configure_gemini():
+    load_dotenv()
+    genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+
+def generate_summary(text):
+    try:
+        model = genai.GenerativeModel("gemini-pro")
+        response = model.generate_content(f"Resuma em português: {text}")
+        return response.text
+    except Exception as e:
+        raise Exception(f"Erro ao gerar resumo: {e}")
+
+# ========== STREAMLIT APP ==========
 
 def main():
-    st.title("📺 YouTube Summarizer com Gemini")
+    st.set_page_config(page_title="YouTube + Gemini", layout="centered")
+    st.title("📺 YouTube Transcript Summarizer com Gemini")
 
-    video_url = st.text_input("🔗 Insira a URL do vídeo do YouTube:")
+    video_url = st.text_input("🔗 Insira a URL do vídeo do YouTube:", "https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+
     if video_url:
         try:
-            yt = YouTube(video_url)
-            video_id = yt.video_id
-            video_title = yt.title
+            video_id = extract_video_id(video_url)
+            if not video_id:
+                st.error("❌ URL inválida. Não foi possível extrair o ID do vídeo.")
+                return
 
+            st.write(f"🎯 ID do vídeo: `{video_id}`")
+
+            video_title = get_video_title(video_url)
             st.subheader(f"🎬 Título do Vídeo: {video_title}")
-            transcript = get_transcription(video_id)
 
-            if transcript.startswith("❌") or transcript.startswith("⚠️"):
-                st.warning(transcript)
-            else:
-                st.subheader("📝 Transcrição:")
-                st.write(transcript)
+            transcript = get_transcript(video_id)
+            st.subheader("📝 Transcrição:")
+            st.write(transcript)
 
-                if st.button("✨ Gerar Resumo com Gemini"):
-                    gemini_utils.configure_gemini()
-                    summary = gemini_utils.generate_summary(transcript)
-
-                    if summary:
-                        st.subheader("📄 Resumo Gerado:")
-                        st.write(summary)
-                    else:
-                        st.error("Erro ao gerar o resumo com Gemini.")
-
+            if st.button("✨ Gerar Resumo com Gemini"):
+                configure_gemini()
+                summary = generate_summary(transcript)
+                if summary:
+                    st.subheader("🧠 Resumo Gerado por Gemini:")
+                    st.write(summary)
+                else:
+                    st.error("❌ Não foi possível gerar o resumo.")
         except Exception as e:
-            st.error(f"💥 Ocorreu um erro: {str(e)}")
+            st.error(f"💥 Ocorreu um erro: {e}")
 
 if __name__ == "__main__":
     main()
